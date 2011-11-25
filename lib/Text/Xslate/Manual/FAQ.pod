@@ -3,6 +3,10 @@
 
 Text::Xslate::Manual::FAQ - Frequently asked questions and answers
 
+=head1 DESCRIPTION
+
+This manual page lists FAQs, which we've heard for now.
+
 =head1 QUESTIONS
 
 =head2 General
@@ -80,6 +84,46 @@ number of C<malloc()> calls required to render a template.
 
 =back
 
+=head2 Configuration
+
+=head3 When I create the Xslate instance?
+
+Xslate instances are reusable and creating the instance costs somewhat
+so you're recommended to reuse them as much as possible.
+That is, you should make the instance global.
+
+Consider a PSGI application:
+
+    # create Xslate here, not in psgi_app();
+    my $xslate = Text::Xslate->new(...);
+
+    sub psgi_app {
+        my($env) = @_;
+        # use $xslate and create $response
+        return $response;
+    }
+    return \&psgi_app; # as a PSGI app
+
+Don't create the instance in each request. It's less efficient.
+
+=head3 How can I change instance attributes dynamically?
+
+Instance attributes, e.g. C<include_path>, C<function>, or C<syntax>,
+are immutable, so you cannot change them dynamically.
+
+Instead, you can create multiple instances by different options.
+instance in order to avoid conflicts with cache directories.
+
+For example:
+
+    my %common_config = ( cache_dir => $dir, module => \@module );
+    my %xslate = (
+        ja => Text::Xslate->new( path => [ $template_ja ], %common_config ),
+        en => Text::Xslate->new( path => [ $template_en ], %common_config ),
+        ro => Text::Xslate->new( path => [ $template_ro ], %common_config ),
+    );
+    $xslate{$lang}->render(...);
+
 =head2 Templates
 
 =head3 How can I changes template tags?
@@ -99,8 +143,8 @@ Note that you'd better to avoid symbols which can be used for operators.
 
 =head3 How can I iterate over HASH references?
 
-Convert HASH references into ARRAY references because C<for> methods can deal
-with ARRAY references.
+Convert HASH references into ARRAY references because C<for> methods can
+deal with just ARRAY references.
 
     : # in Kolon
     : # iterate $hash by keys
@@ -127,7 +171,7 @@ L<Text::Xslate::Bridge::TT2> provides almost all the TT methods and filters,
 but it requires Template-Toolkit installed.
 
 L<Text::Xslate::Bridge::TT2Like> provides the same features as
-C<T::X::Bridge::TT2>, but it does not require the Template-Toolkit distribution.
+C<T::X::Bridge::TT2>, and it does not require the Template-Toolkit runtime.
 
 These bridge modules are useful not only for TTerse users, but
 also for Kolon users.
@@ -147,7 +191,7 @@ hashes), you can write bridge modules. See L<Text::Xslate::Bridge> for details.
 
 =head3 How to limit while-loop like Template-Toolkit?
 
-While Template-Toolkit has a loop counter to prevent runaway WHILE loop,
+While Template-Toolkit has a loop counter to prevent runaway C<WHILE> loop,
 Xslate has no arbitrary limitation.
 
 Instead, you can use C<alarm()> to limit B<any> runaway code:
@@ -168,16 +212,22 @@ X<utf8> X<UTF-8> X<utf8 flagged string> X<unicode>
 see L<perlunifaq>.)
 
 Xslate assumes template files to be encoded in C<UTF-8> by default, so the
-output is a text string and template parameters must be text strings.
-(however, if you want to process binary strings, you can do by passing C<:bytes>
-for C<input_layer>). Thus, parameters which you give C<render()> and values
-which registered functions return must be text strings.
+output is a text string and template parameters, including values which
+registered functions return, B<must> be text strings.
+
+However, if you want to process binary strings, you can do so by passing
+C<:bytes> to C<input_layer>, although it's not recommended.
 
 =head3 Why doesn't I cannot access $object.attr like TT2?
 
-Template-Toolkit allows objects (i.e. blessed references) to access its element, i.e. C<< [% object.attr %] >> means C<< $object->{attr} >> if the object has no C<attr> method. This behavior breaks encapsulation and hides typos, so Xslate doesn't allow such fallbacks.
+Template-Toolkit allows objects (i.e. blessed references) to access its element if the object has no accessor methods, i.e. C<< [% object.attr %] >> might mean C<< $object->{attr} >>. This behavior breaks encapsulation and hides typos, so Xslate doesn't allow such fallbacks.
 
-If you want to access hash elements, define the accessor of them, or prepare values before calling C<render()>.
+If you want to access object attributes, define the accessors of them,
+or prepare values as a non-object before calling C<render()>.
+
+=head3 Can I load macros in other template files?
+
+Not yet. Currently Xslate doesn't support external macros.
 
 =head2 Functions, filters and macros
 
@@ -205,12 +255,6 @@ they are not a I<real> CODE reference.
         { a => [ 0 .. 100 ] },
     ); # => 50
 
-=head2 Development utilities
-
-=head3 How can I colorize Xslate templates?
-
-If you are a C<vim> user, there is F<xslate.vim> for Kolon:
-L<https://github.com/motemen/xslate-vim>
 
 =head2 Web Application Frameworks
 
@@ -230,9 +274,51 @@ L<MojoX::Renderer::Xslate> for L<Mojolicious>
 
 =item *
 
-L<Tiffany> for general
+L<Tiffany> for general usage
 
 =back
+
+There are WAFs which adopt Xslate as the default template engine:
+
+=over
+
+=item *
+
+L<Amon2>
+
+=item *
+
+L<Pickles>
+
+=back
+
+=head3 Where are examples which use Xslate in Catalyst?
+
+Not yet. Please blog it and it'll be introduced here.
+
+=head2 Development and support
+
+=head3 How can I colorize Xslate templates?
+
+If you are a C<vim> user, there is F<xslate.vim> for Kolon:
+L<https://github.com/motemen/xslate-vim>
+
+=head3 Where can I ask questions?
+
+The mailing list is recommended to ask questions.
+
+L<http://groups.google.com/group/xslate>
+
+If you find a bug or have a request, creating github issues is better
+because those tickets are less likely to disappear than the ports in the
+mailing list.
+
+L<https://github.com/xslate/p5-Text-Xslate/issues>
+
+=head3 I found a bug! What can I do for you?
+
+Please make a minimal test case to show the problem clearly.
+The code is the common language both I and you speak fluently ;)
 
 =head1 SEE ALSO
 

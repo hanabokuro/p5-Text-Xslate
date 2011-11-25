@@ -69,6 +69,10 @@ JavaScript
 fallbacks
 UTF
 preforking
+github
+Mojolicious
+HTMLTemplate
+blog
 
 # personal name
 lestrrat
@@ -92,4 +96,5 @@ kane
 taka
 cho
 shmorimo
+ueda
 

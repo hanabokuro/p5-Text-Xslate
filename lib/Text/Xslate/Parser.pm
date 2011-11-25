@@ -474,6 +474,7 @@ sub _init_basic_symbols {
     # special tokens
     $parser->symbol('__FILE__')->set_nud(\&nud_current_file);
     $parser->symbol('__LINE__')->set_nud(\&nud_current_line);
+    $parser->symbol('__ROOT__')->set_nud(\&nud_current_vars);
 
     return;
 }
@@ -1376,6 +1377,13 @@ sub nud_current_line {
     );
 }
 
+sub nud_current_vars {
+    my($self, $symbol) = @_;
+    return $symbol->clone(
+        arity => 'vars',
+    );
+}
+
 sub nud_separator {
     my($self, $symbol) = @_;
     $self->_error("Invalid expression found", $symbol);
@@ -1455,6 +1463,8 @@ sub std_for {
     my $proc = $symbol->clone(arity => 'for');
     $proc->first( $parser->expression(0) );
     $parser->pointy($proc, 1);
+
+    # for-else support
     if($parser->token eq 'else') {
         $parser->advance();
         my $else = $parser->block();

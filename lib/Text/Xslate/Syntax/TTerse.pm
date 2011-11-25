@@ -49,8 +49,8 @@ sub init_symbols {
     $s->set_std(\&std_if);
     $s->can_be_modifier(1);
 
-    $parser->symbol('FOREACH') ->set_std(\&std_foreach);
-    $parser->symbol('FOR')     ->set_std(\&std_foreach);
+    $parser->symbol('FOREACH') ->set_std(\&std_for);
+    $parser->symbol('FOR')     ->set_std(\&std_for);
     $parser->symbol('WHILE')   ->set_std(\&std_while);
     $parser->symbol('SWITCH')  ->set_std(\&std_switch);
     $parser->symbol('CASE')    ->set_std(\&std_case);
@@ -119,11 +119,13 @@ sub default_nud {
     );
 }
 
+# same as default_nud, except for aliased symbols
 sub aliased_nud {
     my($parser, $symbol) = @_;
     return $symbol->clone(
-        arity => 'variale',
+        arity => 'name',
         id    => lc( $symbol->id ),
+        value => $symbol->id,
     );
 }
 
@@ -264,7 +266,7 @@ sub std_switch {
     local $parser->{in_given} = 1;
 
     my @cases;
-    while($parser->token->id ne "END") {
+    while(!($parser->token->id eq "END" or $parser->token->id eq '(end)')) {
         push @cases, $parser->statement();
     }
     $switch->third( \@cases );
@@ -297,22 +299,36 @@ sub iterator_name {
     return 'loop'; # always 'loop'
 }
 
-sub std_foreach {
+# FOR ... IN ...; ...; END
+sub std_for {
     my($parser, $symbol) = @_;
 
     my $proc = $symbol->clone(arity => "for");
 
     my $var = $parser->token;
-    if($var->arity ne "variable") {
+    if(!any_in($var->arity, qw(variable name))) {
         $parser->_unexpected("a variable name", $var);
     }
     $parser->advance();
     $parser->advance("IN");
     $proc->first( $parser->expression(0) );
     $proc->second([$var]);
+
     $parser->new_scope();
     $parser->define_iterator($var);
+
     $proc->third( $parser->statements() );
+
+    # for-else
+    if($parser->token->id eq 'ELSE') {
+        $parser->reserve($parser->token);
+        $parser->advance();
+        my $else = $parser->statements();
+        $proc = $symbol->clone( arity => 'for_else',
+            first  => $proc,
+            second => $else,
+        );
+    }
     $parser->advance("END");
     $parser->pop_scope();
     return $proc;
@@ -662,6 +678,9 @@ Loop iterators are partially supported.
         [%- END -%]
     [% END %]
 
+Unlike Template-Toolkit, C<FOREACH> doesn't accept a HASH reference, so
+you must convert HASH references to ARRAY references by C<keys()>, C<values()>, or C<kv()> methods.
+
 Template-Toolkit compatible names are also supported, but the use of them is
 discouraged because they are not easy to understand:
 
@@ -716,7 +735,7 @@ The C<INCLUDE> statement is supported.
     [% INCLUDE "file.tt" %]
     [% INCLUDE $var %]
 
-C<< WITH variablies >> syntax is also supported, although
+C<< WITH variables >> syntax is also supported, although
 the C<WITH> keyword is optional in Template-Toolkit:
 
     [% INCLUDE "file.tt" WITH foo = 42, bar = 3.14 %]

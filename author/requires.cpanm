@@ -26,4 +26,9 @@ HTML::FillInForm
 HTML::FillInForm::Lite
 HTML::Shakan
 URI::Find
+Mojolicious
+MojoX::Renderer::Xslate
+JavaScript::Value::Escape
+Locale::Maketext::Lexicon
+Data::Localize
 

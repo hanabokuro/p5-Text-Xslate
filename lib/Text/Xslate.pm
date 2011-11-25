@@ -4,7 +4,7 @@ use 5.008_001;
 use strict;
 use warnings;
 
-our $VERSION = '1.3000';
+our $VERSION = '1.5007';
 
 use Carp              ();
 use Fcntl             ();
@@ -13,24 +13,23 @@ use Exporter          ();
 use Data::MessagePack ();
 use Scalar::Util      ();
 
-use Text::Xslate::Util qw(
-    mark_raw unmark_raw
-    html_escape escaped_string
-    uri_escape html_builder
-);
+use Text::Xslate::Util ();
+BEGIN {
+    # all the exportable functions are defined in ::Util
+    our @EXPORT_OK = qw(
+        mark_raw
+        unmark_raw
+        escaped_string
+        html_escape
+        uri_escape
+        html_builder
+    );
+    Text::Xslate::Util->import(@EXPORT_OK);
+}
 
 our @ISA = qw(Text::Xslate::Engine);
 
-our @EXPORT_OK = qw(
-    mark_raw
-    unmark_raw
-    escaped_string
-    html_escape
-    uri_escape
-    html_builder
-);
-
-my $BYTECODE_VERSION = '1.4';
+my $BYTECODE_VERSION = '1.5';
 
 # $bytecode_version + $fullpath + $compiler_and_parser_options
 my $XSLATE_MAGIC   = qq{xslate;$BYTECODE_VERSION;%s;%s;};
@@ -57,13 +56,14 @@ $VERSION =~ s/_//;
 # for error messages (see T::X::Util)
 sub input_layer { ref($_[0]) ? $_[0]->{input_layer} : ':utf8' }
 
-package Text::Xslate::Engine;
+package Text::Xslate::Engine; # XS/PP common base class
 
 use Text::Xslate::Util qw(
     make_error
     dump
 );
 
+# constants
 BEGIN {
     our @ISA = qw(Exporter);
 
@@ -148,7 +148,7 @@ sub new {
     my $options = $class->options;
     my $used    = 0;
     my $nargs   = scalar keys %args;
-    while(my $key = each %{$options}) {
+    foreach my $key(keys %{$options}) {
         if(exists $args{$key}) {
             $used++;
         }
@@ -159,7 +159,8 @@ sub new {
 
     if($used != $nargs) {
         my @unknowns = grep { !exists $options->{$_} } keys %args;
-        warnings::warnif(misc => "$class: Unknown option(s): " . join ' ', @unknowns);
+        warnings::warnif(misc
+            => "$class: Unknown option(s): " . join ' ', @unknowns);
     }
 
     $args{path} = [
@@ -200,8 +201,8 @@ sub new {
 
 sub _merge_hash {
     my($self, $base, $add) = @_;
-    while(my($name, $body) = each %{$add}) {
-        $base->{$name} = $body;
+    foreach my $name(keys %{$add}) {
+        $base->{$name} = $add->{$name};
     }
     return;
 }
@@ -262,29 +263,33 @@ sub find_file {
     foreach my $p(@{$self->{path}}) {
         $self->note("  find_file: %s / %s ...\n", $p, $file) if _DUMP_LOAD;
 
-        my $path_id;
+        my $cache_prefix;
         if(ref $p eq 'HASH') { # virtual path
             defined(my $content = $p->{$file}) or next;
-            $fullpath   = \$content;
-            # TODO: we should provide a way to specify this mtime
-            #       (like as Template::Provider?)
-            $orig_mtime = $^T;
-            $path_id    = 'HASH';
+            $fullpath = \$content;
+
+            # NOTE:
+            # Because contents of virtual paths include their digest,
+            # time-dependent cache verifier makes no sense.
+            $orig_mtime   = 0;
+            $cache_mtime  = 0;
+            $cache_prefix = 'HASH';
         }
         else {
             $fullpath = File::Spec->catfile($p, $file);
             defined($orig_mtime = (stat($fullpath))[_ST_MTIME])
                 or next;
-            $path_id    = Text::Xslate::uri_escape($p);
+            $cache_prefix = Text::Xslate::uri_escape($p);
         }
 
         # $file is found
         $cachepath = File::Spec->catfile(
             $self->{cache_dir},
-            $path_id,
+            $cache_prefix,
             $file . 'c',
         );
-        $cache_mtime = (stat($cachepath))[_ST_MTIME]; # may fail, but doesn't matter
+        # stat() will be failed if the cache doesn't exist
+        $cache_mtime = (stat($cachepath))[_ST_MTIME];
         last;
     }
 
@@ -333,10 +338,10 @@ sub load_file {
     return $asm;
 }
 
-sub slurp {
-    my($self, $fullpath) = @_;
+sub slurp_template {
+    my($self, $input_layer, $fullpath) = @_;
 
-    open my($source), '<' . $self->{input_layer}, $fullpath
+    open my($source), '<' . $input_layer, $fullpath
         or $self->_error("LoadError: Cannot open $fullpath for reading: $!");
     flock($source, Fcntl::LOCK_SH());
     local $/;
@@ -357,7 +362,7 @@ sub _load_source {
             or Carp::carp("Xslate: cannot unlink $cachepath (ignored): $!");
     }
 
-    my $source = $self->slurp($fullpath);
+    my $source = $self->slurp_template($self->input_layer, $fullpath);
     $self->{source}{$fi->{name}} = $source if _SAVE_SRC;
 
     my $asm = $self->compile($source,
@@ -494,18 +499,24 @@ sub _magic_token {
         ref($self->{compiler}) || $self->{compiler},
         $self->_extract_options(\%parser_option),
         $self->_extract_options(\%compiler_option),
+        $self->input_layer,
         $self->{added_function_names},
     ]);
 
     if(ref $fullpath) { # ref to content string
-        require 'Digest/MD5.pm';
-        my $md5 = Digest::MD5->new();
-        my $s = ${$fullpath};
-        utf8::encode($s);
-        $md5->add($s);
-        $fullpath = join ':', ref($fullpath), $md5->hexdigest();
+        $fullpath = join ':', ref($fullpath),
+            $self->_digest(${$fullpath});
     }
     return sprintf $XSLATE_MAGIC, $fullpath, $self->{serial_opt};
+}
+
+sub _digest {
+    my($self, $content) = @_;
+    require 'Digest/MD5.pm'; # we don't want to create its namespace
+    my $md5 = Digest::MD5->new();
+    utf8::encode($content);
+    $md5->add($content);
+    return $md5->hexdigest();
 }
 
 sub _extract_options {
@@ -548,7 +559,8 @@ sub _compiler {
 
 sub compile {
     my $self = shift;
-    return $self->_compiler->compile(@_, from_include => $self->{from_include});
+    return $self->_compiler->compile(@_,
+        from_include => $self->{from_include});
 }
 
 sub _error {
@@ -570,7 +582,7 @@ Text::Xslate - Scalable template engine for Perl5
 
 =head1 VERSION
 
-This document describes Text::Xslate version 1.3000.
+This document describes Text::Xslate version 1.5007.
 
 =head1 SYNOPSIS
 
@@ -631,44 +643,28 @@ compiled into intermediate code, and then executed by the virtual machine,
 which is highly optimized for rendering templates. Thus, Xslate is
 much faster than any other template engines.
 
-Here is a result of F<benchmark/x-rich-env.pl> to compare various template
-engines in I<rich> environment where applications are persistent and XS modules
-are available.
+The template roundup project by Sam Graham shows Text::Xslate got very
+high scores in I<instance_reuse> condition (i.e. for persistent application).
 
-    $ perl -Mblib benchmark/x-rich-env.pl
-    Perl/5.10.1 i686-linux
-    Text::Xslate/0.2002
-    Text::MicroTemplate/0.18
-    Text::MicroTemplate::Extended/0.11
-    Template/2.22
-    Text::ClearSilver/0.10.5.4
-    HTML::Template::Pro/0.9503
-    1..4
-    ok 1 - TT: Template-Toolkit
-    ok 2 - MT: Text::MicroTemplate
-    ok 3 - TCS: Text::ClearSilver
-    ok 4 - HTP: HTML::Template::Pro
-    Benchmarks with 'include' (datasize=100)
-              Rate     TT     MT    TCS    HTP Xslate
-    TT       129/s     --   -84%   -94%   -95%   -99%
-    MT       807/s   527%     --   -63%   -71%   -96%
-    TCS     2162/s  1580%   168%     --   -23%   -89%
-    HTP     2814/s  2087%   249%    30%     --   -85%
-    Xslate 19321/s 14912%  2295%   794%   587%     --
+=over
 
-According to this result, Xslate is 100+ times faster than Template-Toolkit.
-Text::MicroTemplate is a very fast template engine written in pure Perl, but
-XS-based modules, namely Text::ClearSilver, HTML::Template::Pro and Xslate
-are faster than Text::MicroTemplate. Moreover, Xslate is even faster than
-Text::ClearSilver and HTML::Template::Pro.
+=item The template roundup project
 
-There are benchmark scripts in the F<benchmark/> directory.
+L<http://illusori.co.uk/projects/Template-Roundup/>
 
-=head3 Smart escaping for HTML meta characters
+=item Perl Template Roundup October 2010 Performance vs Variant Report: instance_reuse
 
-All the HTML meta characters in template expressions the engine interpolates
-into template texts are escaped automatically, so the output has no
-possibility to XSS by default.
+L<http://illusori.co.uk/projects/Template-Roundup/201010/performance_vs_variant_by_feature_for_instance_reuse.html>
+
+=back
+
+There are some benchmarks in F<benchmark/> directory in the Xslate distribution.
+
+=head3 Smart escaping for HTML metacharacters
+
+All HTML metacharacters in template expressions which are interpolated into
+template texts by the engine are escaped automatically. This means that, by default,
+the output is not prone to XSS.
 
 =head3 Template cascading
 
@@ -746,12 +742,12 @@ For example:
 
     # for bridge modules
     my $tx = Text::Xslate->new(
-        module => ['SomeModule::Bridge::Xslate'],
+        module => ['Text::Xslate::Bridge::Star'],
     );
     print $tx->render_string(
-        '<: $x.some_method() :>',
-        { x => time() },
-    );
+        '<: uc($x) :>',
+        { x => 'foo' },
+    ); # => 'FOO'
 
 Because you can use function-based modules with the C<module> option, and
 also can invoke any object methods in templates, Xslate doesn't require
@@ -835,13 +831,9 @@ This option is passed to the compiler.
 
 Specify the callback I<&cb> which is called on warnings.
 
-This option is experimental.
-
 =item C<< die_handler => \&cb >>
 
 Specify the callback I<&cb> which is called on fatal errors.
-
-This option is experimental.
 
 =back
 
@@ -879,6 +871,11 @@ Compiles and saves it as disk caches if needed.
 
 Returns the current Xslate engine while executing. Otherwise returns C<undef>.
 This method is significant when it is called by template functions and methods.
+
+=head3 B<< Text::Xslate->current_vars :HashRef >>
+
+Returns the current variable table, namely the second argument of
+C<render()> while executing. Otherwise returns C<undef>.
 
 =head3 B<< Text::Xslate->current_file :Str >>
 
@@ -995,6 +992,14 @@ C<< %% ... >> line code, instead of C<< <: ... :> >> and C<< : ... >>.
 B<TTerse> is a syntax that is a subset of Template-Toolkit 2 (and partially TT3),
 which is explained in L<Text::Xslate::Syntax::TTerse>.
 
+=item HTMLTemplate
+
+There's HTML::Template compatible layers in CPAN.
+
+L<Text::Xslate::Syntax::HTMLTemplate> is a syntax for HTML::Template.
+
+L<HTML::Template::Parser> is a converter from HTML::Template to Text::Xslate.
+
 =back
 
 =head1 NOTES
@@ -1070,21 +1075,23 @@ the same in internals:
 
 =item *
 
-Customization of the default escaping filter
+An "too-safe" HTML escaping filter which escape all the symbolic characters
 
 =back
 
 =cut
 
-=head1 SUPPORT
+=head1 RESOURCES
 
 WEB: L<http://xslate.org/>
 
+ML: L<http://groups.google.com/group/xslate>
+
 IRC: #xslate @ irc.perl.org
 
-REPOSITORY:
-    http://github.com/gfx/p5-Text-Xslate/
-    git://github.com/gfx/p5-Text-Xslate.git
+PROJECT HOME: L<http://github.com/xslate/>
+
+REPOSITORY: L<http://github.com/xslate/p5-Text-Xslate/>
 
 =head1 BUGS
 
@@ -1177,6 +1184,8 @@ Thanks to kane46taka for the bug reports.
 Thanks to cho45 for the bug reports.
 
 Thanks to shmorimo for the bug reports.
+
+Thanks to ueda for the suggestions.
 
 =head1 AUTHOR
 

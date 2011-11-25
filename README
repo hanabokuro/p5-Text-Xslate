@@ -48,6 +48,11 @@ Then install it:
 
     $ make install
 
+If you want to install it from the repository, you must install authoring
+tools.
+
+    $ cpanm < author/requires.cpanm
+
 DOCUMENTATION
 
 Text::Xslate documentation is available as in POD. So you can do:
@@ -58,9 +63,10 @@ to read the documentation online with your favorite pager.
 
 RESOURCE
 
-    web site:     http://xslate.org
-    distribution: http://search.cpan.org/dist/Text-Xslate
-    repository:   http://github.com/gfx/p5-Text-Xslate
+    web site:     http://xslate.org/
+    repositories: http://github.com/xslate
+    mailing list: http://groups.google.com/group/xslate
+    irc         : irc://irc.perl.org/#xslate
 
 LICENSE AND COPYRIGHT
 

@@ -2,6 +2,7 @@ Text-Xslate-*
 .*
 !.gitignore
 !.shipit
+!.proverc
 *~
 *.o
 *.obj
@@ -11,7 +12,7 @@ Makefile*
 !Makefile.PL
 *blib
 META.yml
-MYMETA.yml
+MYMETA.*
 inc/
 MANIFEST
 *.out

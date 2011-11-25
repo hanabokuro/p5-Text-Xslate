@@ -281,7 +281,7 @@ sub compile {
     if(my $engine = $self->engine) {
         my $ob = $self->overridden_builtin;
         Internals::SvREADONLY($ob, 0);
-        while(my $name = each %builtin) {
+        foreach my $name(keys %builtin) {
             my $f = $engine->{function}{$name};
             $ob->{$name} = ( $builtin{$name}[1] != $f ) + 0;
         }
@@ -379,7 +379,7 @@ sub _cat_files {
     my $s = '';
     foreach my $file(@{$files}) {
         my $fullpath = $engine->find_file($file)->{fullpath};
-        $s .= $engine->slurp( $fullpath );
+        $s .= $engine->slurp_template( $self->input_layer, $fullpath );
         $self->requires($fullpath);
     }
     return $s;
@@ -395,12 +395,12 @@ sub compile_ast {
 
     my @code;
     foreach my $node(ref($ast) eq 'ARRAY' ? @{$ast} : $ast) {
-        blessed($node) or Carp::confess("Oops: Not a node object: " . p($node));
+        blessed($node) or Carp::confess("[BUG] Not a node object: " . p($node));
 
         printf STDERR "%s"."generate %s (%s)\n", "." x $_lv, $node->arity, $node->id if _DUMP_GEN;
 
         my $generator = $self->can('_generate_' . $node->arity)
-            || Carp::confess("Oops: Unexpected node:  " . p($node));
+            || Carp::confess("[BUG] Unexpected node:  " . p($node));
 
         push @code, $self->$generator($node);
     }
@@ -410,7 +410,7 @@ sub compile_ast {
 
 sub _process_cascade {
     my($self, $cascade, $args, $main_code) = @_;
-    printf STDERR "cascade %s\n", $self->file, $cascade->dump if _DUMP_CAS;
+    printf STDERR "# cascade %s %s", $self->file, $cascade->dump if _DUMP_CAS;
     my $engine = $self->engine
         || $self->_error("Cannot cascade templates without Xslate engine", $cascade);
 
@@ -488,7 +488,7 @@ sub _process_cascade {
         foreach my $c(@{$main_code}) {
             if($c->[_OP_NAME] eq 'print_raw_s'
                     && $c->[_OP_ARG] =~ m{ [^ \t\r\n] }xms) {
-                Carp::carp("Xslate: Uselses use of text '$c->[1]'");
+                Carp::carp("Xslate: Useless use of text '$c->[1]'");
             }
         }
         @{$main_code} = @{$base_code};
@@ -500,7 +500,7 @@ sub _process_cascade {
 
 sub _process_cascade_file {
     my($self, $file, $base_code) = @_;
-    printf STDERR "cascade file %s\n", p($file) if _DUMP_CAS;
+    printf STDERR "# cascade file %s\n", p($file) if _DUMP_CAS;
     my $mtable = $self->macro_table;
 
     for(my $i = 0; $i < @{$base_code}; $i++) {
@@ -511,13 +511,20 @@ sub _process_cascade_file {
 
         # macro
         my $name = $c->[_OP_ARG];
-        #warn "# macro ", $name, "\n";
+        $name =~ s/\@.+$//;
+        printf STDERR "# macro %s\n", $name if _DUMP_CAS;
 
         if(exists $mtable->{$name}) {
+            my $m = $mtable->{$name};
+            if(ref($m) ne 'HASH') {
+                $self->_error('[BUG] Unexpected macro structure: '
+                    . p($m) );
+            }
+
             $self->_error(
                 "Redefinition of macro/block $name in " . $file
                 . " (you must use block modifiers to override macros/blocks)",
-                $mtable->{$name}{line}
+                $m->{line}
             );
         }
 
@@ -766,8 +773,8 @@ sub _generate_for {
     if(@{$vars} != 1) {
         $self->_error("A for-loop requires single variable for each item", $node);
     }
-    local $self->{lvar}  = { %{$self->lvar} }; # new scope
-    local $self->{const} = [];                 # new scope
+    local $self->{lvar}  = { %{$self->lvar} };  # new scope
+    local $self->{const} = [ @{$self->const} ]; # new scope
     local $self->{in_loop} = _FOR_LOOP;
 
     my @code = $self->compile_ast($expr);
@@ -858,7 +865,7 @@ sub _generate_loop_control {
     my $type = $node->id;
 
     any_in($type, qw(last next))
-        or $self->_error("Oops: unknown loop control statement '$type'");
+        or $self->_error("[BUG] Unknown loop control statement '$type'");
 
     if(not $self->{in_loop}) {
         $self->_error("Use of loop control statement ($type) outside of loops");
@@ -868,7 +875,7 @@ sub _generate_loop_control {
     if( $self->{in_loop} == _FOR_LOOP && $type eq 'last' ) {
         my $lvar_id = $self->lvar->{'($_)'};
         defined($lvar_id)
-            or $self->_error('Oops: undefined loop iterator');
+            or $self->_error('[BUG] Undefined loop iterator');
 
         @cleanup = (
             $self->opcode( 'nil', undef,
@@ -1084,6 +1091,11 @@ sub _generate_literal {
 sub _generate_nil {
     my($self) = @_;
     return $self->opcode('nil');
+}
+
+sub _generate_vars {
+    my($self) = @_;
+    return $self->opcode('vars');
 }
 
 sub _generate_composer {
@@ -1328,7 +1340,8 @@ sub _generate_constant {
     $self->{lvar_id}    = $self->lvar_use(1); # don't use local()
 
     if($OPTIMIZE) {
-        if(@expr == 1 && any_in($expr[0][_OP_NAME], qw(literal load_lvar))) {
+        if(@expr == 1
+                && any_in($expr[0][_OP_NAME], qw(literal load_lvar))) {
             $expr[0][_OP_COMMENT] = "constant $lvar_name";
             $self->const->[$lvar_id] = \@expr;
             return @expr; # no real definition
@@ -1415,7 +1428,7 @@ sub _fold_constants {
         $engine->render('<string>');
     };
     if($@) {
-        Carp::carp("Oops: constant folding failed (ignored): $@");
+        Carp::carp("[BUG] Constant folding failed (ignored): $@");
         return 0;
     }
 

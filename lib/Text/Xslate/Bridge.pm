@@ -24,7 +24,7 @@ sub methods {
     my($class, %args) = @_;
 
     if(!exists $storage{$class}) {
-        croak("$class has no methods (possibly not a bride class)");
+        Carp::croak("$class has no methods (possibly not a bride class)");
     }
 
     if(exists $args{-exclude}) {
@@ -62,15 +62,15 @@ sub _functions {
     foreach my $type (qw(scalar hash array)) {
         my $table = $st->{$type} || next;
 
-        while(my($name, $body) = each %{$table}) {
-            $funcs->{$type . '::' . $name} = $body;
+        foreach my $name(keys %{$table}) {
+            $funcs->{$type . '::' . $name} = $table->{$name};
         }
     }
 
     # for functions
     my $table = $st->{function};
-    while(my($name, $body) = each %{$table}) {
-        $funcs->{$name} = $body;
+    foreach my $name(keys %{$table}) {
+        $funcs->{$name} = $table->{$name};
     }
     return $funcs;
 }
