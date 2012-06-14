@@ -90,4 +90,84 @@ foreach my $pair(@data) {
     is $tx->render_string($in, \%vars), $out or diag $in;
 }
 
+{
+    package MyXslate;
+
+    use Any::Moose;
+
+    extends qw(Text::Xslate);
+
+    sub compiler_option {
+        my $self = shift;
+        +{
+            %{ $self->SUPER::compiler_option },
+            my_compiler_option => undef,
+        };
+    }
+
+    sub parser_option {
+        my $self = shift;
+        +{
+            %{ $self->SUPER::parser_option },
+            my_parser_option => undef,
+        };
+    }
+    no Any::Moose;
+
+    package MyCompiler;
+
+    use Any::Moose;
+
+    extends qw(Text::Xslate::Compiler);
+
+    has my_compiler_option => (
+        is       => 'rw',
+    );
+
+    no Any::Moose;
+    __PACKAGE__->meta->make_immutable();
+
+    package MySyntax;
+
+    use Any::Moose;
+
+    extends qw(Text::Xslate::Parser);
+
+    has my_parser_option => (
+        is       => 'rw',
+    );
+
+    no Any::Moose;
+    __PACKAGE__->meta->make_immutable();
+
+    package main;
+
+    my $stderr;
+    my $tx;
+    {
+        local *STDERR;
+        open STDERR, '>:scalar', \$stderr;
+
+        $stderr = '';
+        $tx = Text::Xslate->new(
+            my_compiler_option => 'foo',
+            my_parser_option => 'bar',
+        );
+        like($stderr, qr/Unknown option\(s\): my_parser_option my_compiler_option/, 'detect unknown option');
+
+        $stderr = '';
+        $tx = MyXslate->new(
+            compiler => 'MyCompiler',
+            syntax => 'MySyntax',
+            my_compiler_option => 'foo',
+            my_parser_option => 'bar',
+        );
+        unlike($stderr, qr/Unknown option/, 'no unknown option error');
+    }
+
+    $tx->render_string('');
+    is($tx->{compiler}{my_compiler_option}, 'foo', 'my_compiler_option');
+    is($tx->{compiler}{parser}{my_parser_option}, 'bar', 'my_parser_option');
+}
+
 done_testing;
