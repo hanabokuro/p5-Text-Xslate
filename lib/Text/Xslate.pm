@@ -1,3 +1,4 @@
+hoge
 package Text::Xslate;
 # The Xslate engine class
 use 5.008_001;
