@@ -53,6 +53,8 @@ if(!exists $INC{'Text/Xslate/PP.pm'}) {
 }
 sub USE_XS() { $use_xs }
 
+add hogehoge
+
 # workaround warnings about numeric when it is a developpers' version
 # it must be here because the bootstrap routine requires the under bar.
 $VERSION =~ s/_//;
